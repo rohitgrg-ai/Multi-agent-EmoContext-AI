@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from agents.llm import DEFAULT_MODEL, NullClient, OllamaClient, get_llm_client
+from agents.llm import DEFAULT_MODEL, MAX_REPLY_TOKENS, NullClient, OllamaClient, get_llm_client
 from agents.schemas import IntentReading
 
 VALID_INTENT = {"intent": "complain", "urgency": "low", "needs_support": False, "reason": "annoyed at the phone"}
@@ -36,6 +36,16 @@ def test_successful_structured_reply_is_validated():
     assert sent["model"] == DEFAULT_MODEL
     assert sent["stream"] is False
     assert sent["format"] == IntentReading.model_json_schema()
+
+
+def test_request_turns_thinking_off_and_keeps_output_limit():
+    """Regression: with gemma4 thinking on, hidden reasoning used up the token limit and the JSON was cut off."""
+    client, calls = client_with(lambda request, n: chat_reply(json.dumps(VALID_INTENT)))
+    client.ask_json("system", "user", IntentReading)
+    sent = json.loads(calls[0].content)
+    assert sent["think"] is False
+    assert sent["options"]["num_predict"] == MAX_REPLY_TOKENS == 400
+    assert sent["options"]["temperature"] == 0
 
 
 def test_malformed_reply_is_retried_once_then_accepted():

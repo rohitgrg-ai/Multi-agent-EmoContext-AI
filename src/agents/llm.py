@@ -76,6 +76,11 @@ class OllamaClient:
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "format": schema.model_json_schema(),
             "stream": False,
+            # gemma4 "thinks" before answering by default. Thinking tokens count against
+            # num_predict, so with thinking on most replies were cut off before the JSON
+            # (measured: 13 of 16 agent calls failed). A 14-post comparison found thinking
+            # gave the same sarcasm accuracy at 3-6x the latency, so it is turned off.
+            "think": False,
             "keep_alive": "10m",   # keep the model loaded between the agents' calls
             "options": {"temperature": 0, "num_predict": MAX_REPLY_TOKENS},
         }
