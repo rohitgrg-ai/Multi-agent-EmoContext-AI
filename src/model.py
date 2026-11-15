@@ -87,7 +87,12 @@ def apply_sarcasm_rule(scores, p_sarcastic):
         return scores
     adjusted = scores.copy()
     adjusted[EXCLUDED_WHEN_SARCASTIC] = 0.0
-    return adjusted / adjusted.sum()
+    total = adjusted.sum()
+    # B1 fix: an emoji-only post voting only joy/love has no other emotion to switch to.
+    # Dividing by zero gave NaN and argmax silently returned "anger"; keep the scores instead.
+    if total <= 0:
+        return scores
+    return adjusted / total
 
 
 class Predictor:

@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+# The default run is fast: it needs neither the 500 MB model nor Ollama.
+# Run the slow suites explicitly with `pytest -m model` or `pytest -m llm`.
+addopts = "-m 'not model and not llm'"
+markers = [
+    "model: loads the trained RoBERTa model from models/ (slow, needs the weights)",
+    "llm: calls a running Ollama server",
+]

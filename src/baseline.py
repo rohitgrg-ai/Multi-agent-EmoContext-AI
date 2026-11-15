@@ -37,6 +37,15 @@ def load_keyword_model(models_dir=MODELS):
     return lambda text: str(classifier.predict(vectorizer.transform([clean_text(text)]))[0])
 
 
+def load_sentiment_baseline(models_dir=MODELS):
+    """Return a function giving the baseline's sentiment, or None if the baseline is not trained."""
+    paths = models_dir / "tfidf_vectorizer.joblib", models_dir / "sentiment_linear_svm.joblib"
+    if not all(path.exists() for path in paths):
+        return None
+    vectorizer, classifier = (joblib.load(path) for path in paths)
+    return lambda text: str(classifier.predict(vectorizer.transform([clean_text(text)]))[0])
+
+
 def scores(gold, predicted):
     return {"accuracy": round(accuracy_score(gold, predicted), 4), "macro_f1": round(f1_score(gold, predicted, average="macro"), 4)}
 
