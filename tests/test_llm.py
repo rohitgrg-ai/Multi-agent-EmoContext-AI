@@ -102,12 +102,26 @@ def test_get_llm_client_respects_disable_switch(monkeypatch):
     assert "disabled" in client.reason
 
 
-def test_get_llm_client_falls_back_when_ollama_is_down(monkeypatch):
+def test_get_llm_client_keeps_ollama_client_when_ollama_is_down(monkeypatch):
+    """P4: the client is kept (not swapped for NullClient) so Ollama can start later without an API restart;
+    calls fail fast and return None, which makes each agent use its fallback."""
     monkeypatch.setenv("EMOCONTEXT_LLM", "ollama")
     monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:9")   # nothing listens on port 9
     client = get_llm_client()
-    assert isinstance(client, NullClient)
+    assert isinstance(client, OllamaClient)
     assert "not reachable" in client.reason
+    assert client.is_available(timeout=1.0) is False
+    assert client.ask_json("system", "user", IntentReading) is None
+
+
+def test_is_available_respects_a_short_timeout():
+    def hang(request, n):
+        raise httpx.ConnectTimeout("no answer", request=request)
+
+    client, calls = client_with(hang)
+    assert client.is_available(timeout=1.0) is False
+    assert "ConnectTimeout" in client.reason
+    assert calls[0].extensions["timeout"]["connect"] == 1.0
 
 
 @pytest.mark.llm

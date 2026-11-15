@@ -103,7 +103,7 @@ def describe_status(health: Optional[Dict[str, Any]]) -> SystemStatus:
         return SystemStatus(True, True, False, llm_label, "LLM unavailable",
                             f"Running in fallback mode: the LLM agents use rule-based fallbacks ({reason}).")
     return SystemStatus(True, True, True, llm_label, "Online",
-                        "All six agents are available. The LLM status was checked when the API started.")
+                        "All six agents are available. The LLM status was checked just now.")
 
 
 def agent_mode(agent: str, used_llm: bool, source: Optional[str] = None) -> str:

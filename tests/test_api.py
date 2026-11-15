@@ -168,3 +168,91 @@ def test_api_serialises_both_passes_of_a_revision():
     assert [(c["approved"], c["issues"]) for c in body["critic_history"]] == [(False, ["too casual"]), (True, [])]
     assert body["response"] == body["response_history"][-1] and body["critic"] == body["critic_history"][-1]
     assert body["revision_count"] == 1 and body["final"]["emotion"] == "anger"
+
+
+# ---------- live Ollama status (P4) ----------
+
+class SwitchableOllama:
+    """A fake Ollama server that can be switched up, down, made to hang, or lose the model."""
+    def __init__(self, state="up"):
+        self.state, self.tag_calls = state, 0
+
+    def __call__(self, request):
+        import json as _json
+        import httpx as _httpx
+        if self.state == "down":
+            raise _httpx.ConnectError("connection refused", request=request)
+        if self.state == "hang":
+            raise _httpx.ConnectTimeout("no answer", request=request)
+        if request.url.path == "/api/tags":
+            self.tag_calls += 1
+            names = [] if self.state == "no-model" else ["gemma4:latest"]
+            return _httpx.Response(200, json={"models": [{"name": n} for n in names]})
+        reply = {"ContextReading": GOOD_CONTEXT_JSON, "IntentReading": GOOD_INTENT_JSON}.get(
+            _json.loads(request.content)["format"].get("title"), GOOD_RESPONSE_JSON)
+        return _httpx.Response(200, json={"message": {"content": _json.dumps(reply)}})
+
+
+from conftest import GOOD_CONTEXT as GOOD_CONTEXT_JSON, GOOD_INTENT as GOOD_INTENT_JSON, GOOD_RESPONSE as GOOD_RESPONSE_JSON  # noqa: E402
+
+
+def live_app(fake):
+    import httpx as _httpx
+    from agents.llm import OllamaClient
+    llm = OllamaClient(transport=_httpx.MockTransport(fake))
+    predictor = FakePredictor(SARCASTIC)
+    return create_app(Services(predictor=predictor, graph=build_graph(predictor, llm), llm=llm))
+
+
+def test_health_follows_ollama_starting_and_stopping_without_restart():
+    fake = SwitchableOllama("down")
+    with TestClient(live_app(fake)) as api:
+        down = api.get("/health").json()["llm"]
+        fake.state = "up"
+        up = api.get("/health").json()["llm"]
+        fake.state = "down"
+        down_again = api.get("/health").json()["llm"]
+    assert (down["available"], up["available"], down_again["available"]) == (False, True, False)
+    assert down["provider"] == up["provider"] == "ollama" and up["model"] == "gemma4:latest"
+    assert "not reachable" in down["reason"] and up["reason"] == ""
+
+
+def test_health_reports_missing_model_and_hanging_server():
+    fake = SwitchableOllama("no-model")
+    with TestClient(live_app(fake)) as api:
+        missing = api.get("/health").json()["llm"]
+        fake.state = "hang"
+        hanging = api.get("/health").json()["llm"]
+    assert missing["available"] is False and "not installed" in missing["reason"]
+    assert hanging["available"] is False and "ConnectTimeout" in hanging["reason"]
+
+
+def test_analysis_recovers_when_ollama_comes_back_without_restart():
+    import time
+    fake = SwitchableOllama("down")
+    with TestClient(live_app(fake)) as api:
+        started = time.perf_counter()
+        offline = api.post("/agents/analyze", json={"text": POST}).json()
+        offline_seconds = time.perf_counter() - started
+        fake.state = "up"
+        online = api.post("/agents/analyze", json={"text": POST}).json()
+    # Ollama down: every LLM agent falls back fast, failures are recorded, nothing crashes
+    assert [s["agent"] for s in offline["trace"]] == ["emotion", "sentiment", "context", "intent", "response", "critic"]
+    assert {offline[k]["source"] for k in ("context", "intent", "response")} == {"fallback"}
+    assert len(offline["errors"]) == 3 and all("ConnectError" in e for e in offline["errors"])
+    assert offline["final"]["emotion"] == "anger" and offline_seconds < 2.0
+    # Ollama back: the same running API now uses it
+    assert {online[k]["source"] for k in ("context", "intent", "response")} == {"llm"}
+    assert online["errors"] == [] and online["final"]["emotion"] == "anger"
+
+
+def test_disable_switch_still_uses_null_client_and_never_calls_ollama(monkeypatch):
+    from agents.llm import get_llm_client
+    monkeypatch.setenv("EMOCONTEXT_LLM", "none")
+    llm = get_llm_client()
+    predictor = FakePredictor(SARCASTIC)
+    with TestClient(create_app(Services(predictor=predictor, graph=build_graph(predictor, llm), llm=llm))) as api:
+        health = api.get("/health").json()["llm"]
+        result = api.post("/agents/analyze", json={"text": POST}).json()
+    assert health == {"provider": "none", "model": None, "available": False, "reason": "LLM disabled by EMOCONTEXT_LLM=none"}
+    assert result["errors"] == [] and result["context"]["source"] == "fallback"

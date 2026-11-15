@@ -172,7 +172,7 @@ def show_trace(result, status):
     section("Six-agent execution trace", "Every step the LangGraph workflow ran, in order, as reported by the API.")
     fell_back = fallback_agents(result)
     if fell_back and status.llm_active:
-        st.warning("The LLM was available when the API started, but these agents used their rule-based fallback "
+        st.warning("The LLM was reported available, but these agents used their rule-based fallback "
                    f"for this post: {', '.join(fell_back)}. See the pipeline messages below.")
     sources = {name: (result.get(name) or {}).get("source") for name in ("context", "intent", "response")}
     seen = set()

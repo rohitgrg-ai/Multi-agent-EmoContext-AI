@@ -56,10 +56,13 @@ class OllamaClient:
         # `transport` lets tests replace the network with a fake one.
         self.http = httpx.Client(base_url=base_url, timeout=timeout, transport=transport)
 
-    def is_available(self) -> bool:
-        """True if the server answers and has the configured model installed."""
+    def is_available(self, timeout: float = 3.0) -> bool:
+        """True if the server answers and has the configured model installed.
+
+        Uses GET /api/tags, which only lists installed models: it never loads the model.
+        """
         try:
-            response = self.http.get("/api/tags", timeout=3.0)
+            response = self.http.get("/api/tags", timeout=timeout)
             response.raise_for_status()
             names = [entry.get("name") for entry in response.json().get("models", [])]
         except (httpx.HTTPError, ValueError) as error:
@@ -105,12 +108,16 @@ class OllamaClient:
 
 
 def get_llm_client():
-    """Build the client from environment variables, falling back to NullClient if Ollama is unusable."""
+    """Build the client from environment variables.
+
+    EMOCONTEXT_LLM=none gives a NullClient. Otherwise an OllamaClient is returned even if Ollama is
+    not running yet: each call either succeeds or fails fast and the agent uses its fallback, so
+    Ollama can be started or stopped later without restarting the API. `/health` probes it live.
+    """
     if os.getenv("EMOCONTEXT_LLM", "ollama").lower() == "none":
         return NullClient("LLM disabled by EMOCONTEXT_LLM=none")
     client = OllamaClient(model=os.getenv("OLLAMA_MODEL", DEFAULT_MODEL),
                           base_url=os.getenv("OLLAMA_URL", DEFAULT_URL),
                           timeout=float(os.getenv("OLLAMA_TIMEOUT", DEFAULT_TIMEOUT_SECONDS)))
-    if client.is_available():
-        return client
-    return NullClient(client.reason)
+    client.is_available()   # sets `reason` for logs if Ollama is down now; the client is kept either way
+    return client

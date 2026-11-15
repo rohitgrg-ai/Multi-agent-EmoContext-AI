@@ -10,9 +10,10 @@ The model and the compiled graph are loaded once when the server starts (FastAPI
 "lifespan"), not on every request. If the model files are missing the server still
 starts, `/health` reports it, and the analysis endpoints return 503.
 
-Ollama is optional: `get_llm_client()` falls back to NullClient, and the LLM agents then
-use their deterministic fallbacks. The LLM status is checked once at start-up, so start
-Ollama before the API (or restart the API) for it to be used.
+Ollama is optional. When it is down, each LLM call fails fast and the agent uses its
+deterministic fallback; when it comes back, the next request uses it, with no restart.
+`/health` checks Ollama live on every call (1 second limit, model list only). Setting
+EMOCONTEXT_LLM=none uses NullClient and never contacts Ollama.
 
 Privacy: the submitted text is never written to the logs, only error types.
 The endpoints are plain `def` functions, so FastAPI runs them in its thread pool and the
@@ -36,6 +37,7 @@ from agents.schemas import (ContextReport, CriticReport, EmotionResult, FinalRes
                             SentimentResult, TraceStep)
 
 MAX_TEXT_CHARS = 2000
+HEALTH_LLM_TIMEOUT_SECONDS = 1.0   # live Ollama check in /health
 logger = logging.getLogger("emocontext.api")
 
 
@@ -133,12 +135,15 @@ def create_app(services: Optional[Services] = None) -> FastAPI:
     def health(request: Request) -> HealthResponse:
         current = request.app.state.services
         llm = current.llm or NullClient("LLM not configured")
+        # Ask Ollama now rather than trusting the start-up state, so the status follows
+        # Ollama being started or stopped while the API runs.
+        available = llm.is_available(timeout=HEALTH_LLM_TIMEOUT_SECONDS) if hasattr(llm, "is_available") else False
         return HealthResponse(
             status="ok" if current.predictor is not None else "degraded",
             model_loaded=current.predictor is not None,
             model_error=current.model_error,
-            llm=LLMStatus(provider=llm.provider, model=llm.model, available=llm.provider != "none",
-                          reason=llm.reason),
+            llm=LLMStatus(provider=llm.provider, model=llm.model, available=available,
+                          reason="" if available else llm.reason),
         )
 
     @app.post("/analyze", response_model=AnalyzeResponse)
