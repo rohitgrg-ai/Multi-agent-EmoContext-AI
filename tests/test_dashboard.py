@@ -246,13 +246,57 @@ def test_missing_optional_fields_still_render(app, monkeypatch):
     assert "No trace was returned." in page and "not available" in page and "Context Agent alternative" not in page
 
 
+REVISED_DRAFT = {"explanation": "The post reads as anger; the praise is not meant.", "suggested_reply": "That sounds frustrating."}
+
+
+def revised_result(responses=(GOOD_RESPONSE, REVISED_DRAFT)):
+    return api_result(FakeClient({"ContextReading": [dict(GOOD_CONTEXT, is_sarcastic=False)], "IntentReading": [GOOD_INTENT],
+                                  "ResponseText": list(responses),
+                                  "CriticReview": [{"approved": False, "issues": ["too casual"]}]}),
+                      prediction=build_prediction({"anger": 0.6, "sadness": 0.4}, p_sarcastic=0.7))
+
+
 def test_revision_is_reported_from_the_trace_without_inventing_details(app, monkeypatch):
-    revised = api_result(FakeClient({"ContextReading": [dict(GOOD_CONTEXT, is_sarcastic=False)], "IntentReading": [GOOD_INTENT],
-                                     "ResponseText": [GOOD_RESPONSE],
-                                     "CriticReview": [{"approved": False, "issues": ["too casual"]}]}),
-                         prediction=build_prediction({"anger": 0.6, "sadness": 0.4}, p_sarcastic=0.7))
-    fake_api(monkeypatch, result=revised)
+    fake_api(monkeypatch, result=revised_result())
     run_example(app.run())
     page = html_text(app)
     assert "Response Agent (revision)" in page and "Critic Agent (revision)" in page
+    # P2: the API now returns both passes, so the dashboard shows them instead of a trace summary
+    assert "Revision history" in page and "Pass 1 · Draft (rejected)" in page
+    assert "Pass 2 · Revised draft · final response" in page
+    assert "Revision feedback sent to the Response Agent" in page and "too casual" in page
+    assert GOOD_RESPONSE["explanation"] in page and REVISED_DRAFT["explanation"] in page
+    assert "approved after revision" in page
+
+
+def test_older_api_without_history_falls_back_to_the_trace(app, monkeypatch):
+    old = {k: v for k, v in revised_result().items() if k not in ("response_history", "critic_history")}
+    fake_api(monkeypatch, result=old)
+    run_example(app.run())
     assert any("sent back for revision" in caption.value for caption in app.caption)
+    assert "Revision history" not in html_text(app)
+
+
+def test_second_rejection_shows_not_approved_outcome(app, monkeypatch):
+    unnamed = {"explanation": "This is a post.", "suggested_reply": "Oh no."}
+    fake_api(monkeypatch, result=revised_result(responses=(unnamed,)))
+    run_example(app.run())
+    page = html_text(app)
+    assert "kept after revision, still not approved" in page and "Not approved (no revisions left)" in page
+    assert "explanation names emotion" in page
+
+
+def test_one_pass_result_shows_no_revision_history(app, monkeypatch):
+    fake_api(monkeypatch, result=GEMMA_RESULT)
+    run_example(app.run())
+    page = html_text(app)
+    assert "Revision history" not in page and "Pass 1" not in page
+    assert "Rule checks" in page and "Final response." in page
+
+
+def test_revision_passes_pairs_drafts_with_reviews():
+    passes = client.revision_passes(revised_result())
+    assert [(p["number"], p["sent_back"], p["is_final"]) for p in passes] == [(1, True, False), (2, False, True)]
+    assert passes[0]["review"]["issues"] == ["too casual"]
+    assert client.revision_passes(GEMMA_RESULT)[0]["is_final"] is True
+    assert client.revision_passes({}) == []

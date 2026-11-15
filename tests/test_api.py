@@ -138,3 +138,33 @@ def test_real_lifespan_loads_model_and_matches_predictor(monkeypatch):
         full = test_client.post("/agents/analyze", json={"text": POST}).json()
     assert ml_only["emotion"]["label"] == full["final"]["emotion"] == expected["emotion"]
     assert ml_only["sentiment"]["label"] == full["final"]["sentiment"] == expected["sentiment"]
+
+
+# ---------- revision history (P2, additive fields) ----------
+
+FIELDS_BEFORE_P2 = {"final", "emotion", "sentiment", "context", "intent", "response", "critic", "revision_count", "trace", "errors"}
+
+
+def test_agents_analyze_keeps_every_existing_field_and_adds_histories(client):
+    body = client.post("/agents/analyze", json={"text": POST}).json()
+    assert FIELDS_BEFORE_P2 <= set(body)
+    assert set(body) - FIELDS_BEFORE_P2 == {"response_history", "critic_history"}
+    assert body["response_history"] == [body["response"]] and body["critic_history"] == [body["critic"]]
+
+
+def test_analyze_endpoint_is_unchanged(client):
+    assert set(client.post("/analyze", json={"text": POST}).json()) == {"emotion", "sentiment", "errors"}
+
+
+def test_api_serialises_both_passes_of_a_revision():
+    from conftest import GOOD_CONTEXT, GOOD_INTENT, GOOD_RESPONSE, FakeClient
+    revised = {"explanation": "The post reads as anger.", "suggested_reply": "That sounds frustrating."}
+    predictor = FakePredictor(build_prediction({"anger": 0.6, "sadness": 0.4}, p_sarcastic=0.7))
+    llm = FakeClient({"ContextReading": [dict(GOOD_CONTEXT, is_sarcastic=False)], "IntentReading": [GOOD_INTENT],
+                      "ResponseText": [GOOD_RESPONSE, revised], "CriticReview": [{"approved": False, "issues": ["too casual"]}]})
+    with TestClient(create_app(Services(predictor=predictor, graph=build_graph(predictor, llm), llm=llm))) as api:
+        body = api.post("/agents/analyze", json={"text": POST}).json()
+    assert [d["explanation"] for d in body["response_history"]] == [GOOD_RESPONSE["explanation"], revised["explanation"]]
+    assert [(c["approved"], c["issues"]) for c in body["critic_history"]] == [(False, ["too casual"]), (True, [])]
+    assert body["response"] == body["response_history"][-1] and body["critic"] == body["critic_history"][-1]
+    assert body["revision_count"] == 1 and body["final"]["emotion"] == "anger"

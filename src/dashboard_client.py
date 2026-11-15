@@ -134,8 +134,31 @@ def top_scores(scores: Optional[Dict[str, float]], limit: int = 7) -> List[Tuple
     return sorted((scores or {}).items(), key=lambda item: item[1], reverse=True)[:limit]
 
 
+def revision_passes(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Pair each Response draft with the Critic review of that draft, in order.
+
+    Pass N's review is the feedback the Response Agent received before pass N+1. Returns an
+    empty list when the API sent no history (an older backend).
+    """
+    drafts, reviews = result.get("response_history") or [], result.get("critic_history") or []
+    passes = []
+    for index, (draft, review) in enumerate(zip(drafts, reviews)):
+        passes.append({
+            "number": index + 1,
+            "draft": draft,
+            "review": review,
+            "sent_back": index < len(reviews) - 1,          # another pass followed this review
+            "is_final": index == len(reviews) - 1,
+            "failed_checks": [name for name, passed in (review.get("rule_checks") or {}).items() if not passed],
+        })
+    return passes
+
+
 def agent_output(result: Dict[str, Any], agent: str) -> Dict[str, Any]:
     """The part of the API response that belongs to one agent."""
     if agent == "critic":
-        return {**(result.get("critic") or {}), "revision_count": result.get("revision_count", 0)}
+        return {**(result.get("critic") or {}), "revision_count": result.get("revision_count", 0),
+                "critic_history": result.get("critic_history", [])}
+    if agent == "response":
+        return {**(result.get("response") or {}), "response_history": result.get("response_history", [])}
     return result.get(agent) or {}

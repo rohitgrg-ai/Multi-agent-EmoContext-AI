@@ -13,8 +13,8 @@ from pathlib import Path
 import streamlit as st
 
 from dashboard_client import (AGENT_TITLES, MAX_TEXT_CHARS, START_API_COMMAND, agent_mode, agent_output,
-                              analyse_post, describe_status, fallback_agents, fetch_health, source_label,
-                              top_scores, validate_text)
+                              analyse_post, describe_status, fallback_agents, fetch_health, revision_passes,
+                              source_label, top_scores, validate_text)
 
 # Same emotion colours as the original app (each pair meets WCAG AA contrast).
 EMOTION_COLOURS = {
@@ -229,7 +229,9 @@ def show_context_and_intent(result, status):
 
 def show_response(result, status):
     response = result.get("response") or {}
-    section("Generated response")
+    revised = len(revision_passes(result)) > 1
+    section("Generated response", "Final response, revised after the Critic's feedback (see Critic review)."
+            if revised else "Final response.")
     with st.container(border=True, key="card_response"):
         st.html(f'<p class="source">{escape(source_label(response.get("source"), status.llm_label))}</p>'
                 f'<p class="label">Explanation</p><p>{escape(str(response.get("explanation", "—")))}</p>'
@@ -237,10 +239,41 @@ def show_response(result, status):
                 f'{escape(str(response.get("suggested_reply", "—")))}</blockquote>')
 
 
+def bullet_list(items, empty="None"):
+    return "".join(f"<li>{escape(str(item))}</li>" for item in items) or f"<li>{escape(empty)}</li>"
+
+
+def pass_html(item):
+    draft, review = item["draft"], item["review"]
+    if item["sent_back"]:
+        decision, tone, title = "Sent back for revision", "warn", "Draft (rejected)"
+    else:
+        decision = "Approved" if review.get("approved") else "Not approved (no revisions left)"
+        tone, title = ("ok" if review.get("approved") else "bad"), "Revised draft · final response" \
+            if item["number"] > 1 else "Draft · final response"
+    feedback_label = "Revision feedback sent to the Response Agent" if item["sent_back"] else "Issues"
+    return (f'<div class="pass"><p class="label">Pass {item["number"]} · {escape(title)}</p>'
+            f'<p>{escape(str(draft.get("explanation", "—")))}</p>'
+            f'<blockquote class="reply">{escape(str(draft.get("suggested_reply", "—")))}</blockquote>'
+            f'<p class="small"><b>Critic decision:</b> {pill(decision, tone)} · <b>LLM review:</b> '
+            f'{"yes" if review.get("llm_reviewed") else "no"}</p>'
+            f'<div class="two-col"><div><p class="label">Failed rule checks</p><ul class="plain">'
+            f'{bullet_list([n.replace("_", " ") for n in item["failed_checks"]])}</ul></div>'
+            f'<div><p class="label">{feedback_label}</p><ul class="plain">{bullet_list(review.get("issues") or [])}</ul>'
+            f'</div></div></div>')
+
+
 def show_critic(result):
     critic, revisions = result.get("critic") or {}, int(result.get("revision_count") or 0)
+    passes = revision_passes(result)
     section("Critic review")
     with st.container(border=True, key="card_critic"):
+        if len(passes) > 1:
+            outcome = "approved after revision" if critic.get("approved") else "kept after revision, still not approved"
+            st.html(f'<p class="big">{"Approved" if critic.get("approved") else "Not approved"}</p>'
+                    f'<p class="small"><b>Revisions:</b> {revisions} · <b>Final outcome:</b> {escape(outcome)}</p>'
+                    '<p class="label">Revision history</p>' + "".join(pass_html(item) for item in passes))
+            return
         checks = "".join(f'<li>{"✓" if passed else "✗"} {escape(name.replace("_", " "))}</li>'
                          for name, passed in (critic.get("rule_checks") or {}).items())
         issues = "".join(f"<li>{escape(str(issue))}</li>" for issue in critic.get("issues") or []) or "<li>None</li>"
@@ -249,10 +282,10 @@ def show_critic(result):
                 f'{"yes" if critic.get("llm_reviewed") else "no"}</p>'
                 f'<div class="two-col"><div><p class="label">Rule checks</p><ul class="plain">{checks}</ul></div>'
                 f'<div><p class="label">Issues in the final review</p><ul class="plain">{issues}</ul></div></div>')
-        if revisions:
+        if revisions:   # an older API without history: report only what the trace records
             first_pass = next((s.get("summary") for s in result.get("trace") or [] if s.get("agent") == "critic"), None)
-            st.caption("The draft was sent back once. The API keeps only the final review's details; the first "
-                       f"review is recorded in the trace as: “{first_pass}”.")
+            st.caption("The draft was sent back once. This API version keeps only the final review's details; the "
+                       f"first review is recorded in the trace as: “{first_pass}”.")
 
 
 def show_comparison(result):

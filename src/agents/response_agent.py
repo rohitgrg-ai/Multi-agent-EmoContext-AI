@@ -57,4 +57,4 @@ def run(state: AgentState, llm) -> dict:
     summary = ("revised draft" if is_revision else "draft") + f" written ({draft.source})"
     step = TraceStep(agent="response", used_llm=draft.source == "llm",
                      duration_ms=(time.perf_counter() - started) * 1000, summary=summary)
-    return {"response": draft, "trace": [step], "errors": errors}
+    return {"response": draft, "response_history": [draft], "trace": [step], "errors": errors}

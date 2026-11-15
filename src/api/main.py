@@ -63,6 +63,10 @@ class AgentAnalyzeResponse(BaseModel):
     revision_count: int
     trace: List[TraceStep]
     errors: List[str]
+    # Added in P2 (additive): every Response and Critic pass in order. `response` and `critic`
+    # above are unchanged and still equal the last entry of these lists.
+    response_history: List[ResponseDraft] = []
+    critic_history: List[CriticReport] = []
 
 
 class LLMStatus(BaseModel):
@@ -155,7 +159,8 @@ def create_app(services: Optional[Services] = None) -> FastAPI:
         current = loaded(request)
         try:
             state = analyse(current.graph, body.text)
-            return AgentAnalyzeResponse(**{field: state[field] for field in AgentAnalyzeResponse.model_fields})
+            return AgentAnalyzeResponse(**{field: state[field] for field in AgentAnalyzeResponse.model_fields
+                                           if field in state})
         except Exception as error:
             logger.error("/agents/analyze failed: %s", error.__class__.__name__)
             raise HTTPException(status_code=500, detail="agent analysis failed") from None

@@ -150,7 +150,7 @@ def run(state: AgentState, llm) -> dict:
     step = TraceStep(agent="critic", used_llm=llm_reviewed,
                      duration_ms=(time.perf_counter() - started) * 1000, summary=summary)
 
-    update = {"critic": report, "trace": [step], "errors": []}
+    update = {"critic": report, "critic_history": [report], "trace": [step], "errors": []}
     if send_back:
         update["revision_count"] = revisions_used + 1
     else:

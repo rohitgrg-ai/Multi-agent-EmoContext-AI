@@ -54,7 +54,8 @@ def build_graph(predictor, llm, emotion_baseline: Optional[Callable[[str], str]]
 
 def analyse(graph, text: str) -> AgentState:
     """Run one post through every agent and return the final shared state."""
-    initial: AgentState = {"text": text, "revision_count": 0, "trace": [], "errors": []}
+    initial: AgentState = {"text": text, "revision_count": 0, "trace": [], "errors": [],
+                           "response_history": [], "critic_history": []}
     return graph.invoke(initial, config={"recursion_limit": RECURSION_LIMIT})
 
 

@@ -27,3 +27,8 @@ class AgentState(TypedDict, total=False):
     revision_count: int                # how many times the Critic sent the response back (max 1)
     trace: Annotated[List[TraceStep], operator.add]
     errors: Annotated[List[str], operator.add]
+    # Every pass is kept, in order. `response` and `critic` above hold only the latest pass;
+    # these lists also keep the first draft and the first review when a revision happens.
+    # The revision feedback is critic_history[0].issues: that is what the Response Agent was given.
+    response_history: Annotated[List[ResponseDraft], operator.add]   # one entry per Response Agent run
+    critic_history: Annotated[List[CriticReport], operator.add]      # one entry per Critic Agent run
