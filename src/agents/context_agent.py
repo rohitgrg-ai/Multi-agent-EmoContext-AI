@@ -1,5 +1,7 @@
 """Context Agent (LLM): reads the implied meaning, sarcasm and supporting cues.
 
+It reads the post on its own, without the classifier's results, so that its reading is not
+anchored to them. Whether it agrees with the classifier on sarcasm is worked out here in code.
 It may suggest a different emotion, but that suggestion is stored separately as an
 alternative. The classifier's emotion stays the final answer (see critic_agent.py).
 """
@@ -39,6 +41,9 @@ def run(state: AgentState, llm) -> dict:
             report.proposed_emotion = None   # agreeing with the classifier is not an alternative
 
     summary = f"{'sarcastic' if report.is_sarcastic else 'literal'}; {len(report.cues)} cue(s)"
+    if report.source == "llm":
+        agrees = report.is_sarcastic == state["emotion"].sarcasm_flagged
+        summary += f"; {'agrees' if agrees else 'disagrees'} with the classifier on sarcasm"
     if report.proposed_emotion:
         summary += f"; suggests {report.proposed_emotion} as an alternative"
     step = TraceStep(agent="context", used_llm=report.source == "llm",
