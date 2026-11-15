@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+venv*/
+
+# Secrets and local settings
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Machine learning models (copied in locally, never committed)
+models/
+*.safetensors
+*.joblib
+*.pkl
+*.pt
+*.bin
+
+# Datasets (copied in locally, never committed)
+data/*.csv
+# Small hand-made evaluation set: keep it in git
+!data/ambiguous_*.csv
+
+# Logs and local tool state
+*.log
+.DS_Store
+.claude/
