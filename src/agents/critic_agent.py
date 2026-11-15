@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 from typing import Dict, List
 
-from agents import prompts
+from agents import faithfulness, prompts
 from agents.schemas import CriticReport, CriticReview, FinalResult, TraceStep
 from agents.state import AgentState
 from model import EMOTION_SENTIMENT, SARCASM_THRESHOLD
@@ -30,8 +30,10 @@ UNCERTAIN_SARCASM_FLOOR = 0.5      # 0.5 <= P(sarcasm) < SARCASM_THRESHOLD is th
 LOW_TEXT_CONFIDENCE = 0.5          # same "weak guess" cut-off as the original app
 
 # Checks on the Response Agent's draft. Only these can be fixed by a revision.
+# The faithfulness checks (agents/faithfulness.py) compare the explanation's factual claims
+# with the real model outputs, so a wrong number is caught without an LLM call.
 RESPONSE_CHECKS = ("explanation_present", "reply_present", "explanation_length_ok",
-                   "reply_length_ok", "explanation_names_emotion")
+                   "reply_length_ok", "explanation_names_emotion") + faithfulness.CHECK_NAMES
 
 
 def cues_in_post(cues: List[str], text: str) -> bool:
@@ -39,9 +41,14 @@ def cues_in_post(cues: List[str], text: str) -> bool:
     return all(cue.strip().lower() in lowered for cue in cues if cue.strip())
 
 
+def faithfulness_problems(state: AgentState) -> Dict[str, List[str]]:
+    return faithfulness.check_explanation(state["text"], state["emotion"], state["sentiment"],
+                                          state["response"].explanation)
+
+
 def rule_checks(state: AgentState) -> Dict[str, bool]:
     emotion, sentiment, context, response = state["emotion"], state["sentiment"], state["context"], state["response"]
-    return {
+    checks = {
         "sentiment_matches_emotion": sentiment.label == EMOTION_SENTIMENT[emotion.label],
         "context_cues_in_post": cues_in_post(context.cues, state["text"]),
         "explanation_present": bool(response.explanation.strip()),
@@ -50,6 +57,8 @@ def rule_checks(state: AgentState) -> Dict[str, bool]:
         "reply_length_ok": len(response.suggested_reply) <= MAX_REPLY_CHARS,
         "explanation_names_emotion": emotion.label in response.explanation.lower(),
     }
+    checks.update({name: not problems for name, problems in faithfulness_problems(state).items()})
+    return checks
 
 
 def ml_is_uncertain(state: AgentState) -> bool:
@@ -92,7 +101,11 @@ def issues_from(checks: Dict[str, bool], state: AgentState) -> List[str]:
         "reply_length_ok": f"The suggested reply is longer than {MAX_REPLY_CHARS} characters.",
         "explanation_names_emotion": f"The explanation must name the emotion '{state['emotion'].label}'.",
     }
-    return [messages[name] for name, passed in checks.items() if not passed]
+    issues = [messages[name] for name, passed in checks.items() if not passed and name in messages]
+    for name, problems in faithfulness_problems(state).items():   # specific, actionable messages
+        if not checks.get(name, True):
+            issues.extend(problems)
+    return issues
 
 
 def final_result(state: AgentState, alternative) -> FinalResult:
